@@ -1,8 +1,6 @@
 # ai-delivery-support-app
 Re:lation APIとBERTを利用したAI発送業務支援アプリ
 
-# AI発送業務支援アプリ
-
 ## 概要
 
 Re:lation APIとBERTを利用した発送業務支援アプリです。
