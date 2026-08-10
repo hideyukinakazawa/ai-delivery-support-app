@@ -10,7 +10,7 @@ Re:lation APIとBERTを利用した発送業務支援アプリです。
 - Streamlit
 - BERT
 - Re:lation API
-- 
+
 ## 開発目的
 
 紙で管理していた発送業務をAIによって効率化する。
