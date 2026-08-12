@@ -9,7 +9,7 @@ Figmaで作成したモックアップを参照
 ## Streamlit
 
 ### 1. 初期画面
-
+![初期画面](images/home.png)
 
 ### 2. 問い合わせ取得 
 ![問い合わせ取得](images/get-inquiries.png)
