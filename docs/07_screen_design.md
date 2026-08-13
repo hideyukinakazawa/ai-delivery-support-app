@@ -24,7 +24,9 @@ Figmaで作成したモックアップを参照
 ![発送前・梱包](images/packing.png)
 
 ### 5. 倉庫会社から発送・リレーション連絡
+![リレーション連絡](images/relation.png)
 
 ### 6. 倉庫会社から発送・スマレジ登録
+![スマレジ登録](images/smaregi.png)
 
 
