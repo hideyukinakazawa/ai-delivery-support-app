@@ -2,23 +2,25 @@ import random
 import pandas as pd
 
 templates = {
-    "配送日時確定": [
-        "午前中の受け取りを希望します",
-        "都合が悪くなったため、配送日時の変更をお願いします。"
-        ]
+    "希望配送日あり": [
+        "平日の受け取りを希望します。お願いいたします。",
+        "週末に受け取れると助かります。",
+        "水曜日の配送をお願いできますか。",
+        "月曜日以外でしたら都合がよいです。可能でしょうか。",
+        "できるだけ早い日の受け取りを希望します。"
+    ]
 }
 
 rows = []
 
-for label, patterns in templates.items():
-    for _ in range(10):
-        body = random.choice(patterns).format(
-            date=random.choice(["来週火曜日", "来週金曜日", "今週末"]),
-            time_slot=random.choice(["午前中", "14時〜16時", "16時～18時", "18時～20時", "19時～21時"])
-        )
-
+for label, bodies in templates.items():
+    for body in bodies:
         rows.append({
-            "subject": f"{label}について",
+            "subject": random.choice([
+                "配送希望について",
+                "受取日のご相談",
+                "配送日の確認"
+            ]),
             "body": body,
             "label": label
         })
