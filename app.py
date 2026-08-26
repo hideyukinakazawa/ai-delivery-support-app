@@ -27,6 +27,8 @@ if st.button("配送希望を分類する"):
             st.subheader("分類結果")
             st.write(f"**ラベル：** {result['label']}")
             st.write(f"**確信度：** {result['confidence']:.1%}")
+            st.write(f"**希望日：** {result['preferred_date'] or '指定なし'}")
+            st.write(f"**希望時間帯：** {result['preferred_time'] or '指定なし'}")
 
         except requests.exceptions.ConnectionError:
             st.error("BERT分類APIに接続できません。api.pyを起動してください。")
