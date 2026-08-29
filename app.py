@@ -29,8 +29,8 @@ def create_reply_draft(
     return (
         "お問い合わせありがとうございます。\n\n"
         f"{preference_text}\n"
-        "配送可否を確認のうえ、改めてご案内いたします。\n\n"
-        "よろしくお願いいたします。"
+        "発送時には改めてご案内いたします。\n\n"
+        "よろしくお願いいたします。\n"
     )
 
 st.set_page_config(page_title="AI配送業務支援アプリ")
