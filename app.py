@@ -5,31 +5,34 @@ import streamlit as st
 def create_reply_draft(
     preferred_date: str | None,
     preferred_time: str | None,
+    preferred_time: str | None,
 ) -> str:
     """抽出した希望日時から返信メール下書きを作る。"""
 
     if preferred_date and preferred_time:
         preference_text = (
-            f"ご希望の配送日は{preferred_date}、"
-            f"時間帯は{preferred_time}として承りました。"
+            f"配送日は「{preferred_date}」、"
+            f"時間帯は「{preferred_time}」をご希望として伺っております。"
         )
     elif preferred_date:
         preference_text = (
-            f"ご希望の配送日は{preferred_date}として承りました。"
+            f"配送日は「{preferred_date}」をご希望として伺っております。"
         )
     elif preferred_time:
         preference_text = (
-            f"ご希望の配送時間帯は{preferred_time}として承りました。"
+            f"配送時間帯は「{preferred_time}」をご希望として伺っております。"
         )
     else:
-        preference_text = "配送日時のご指定なしとして承りました。"
+        preference_text = (
+            "配送に関するお問い合わせについて、内容を確認しております。"
+        )
 
     return (
-        "お問い合わせありがとうございます。\n"
+        "お問い合わせありがとうございます。\n\n"
         f"{preference_text}\n"
-        "内容を確認のうえ、改めてご案内いたします。"
+        "配送可否を確認のうえ、改めてご案内いたします。\n\n"
+        "よろしくお願いいたします。"
     )
-
 
 st.set_page_config(page_title="AI配送業務支援アプリ")
 st.title("AI配送業務支援アプリ")
