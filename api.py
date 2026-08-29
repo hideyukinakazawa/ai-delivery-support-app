@@ -24,7 +24,7 @@ model.eval()
 
 DATE_PATTERN = r"\d{1,2}月\d{1,2}日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日|日曜日|平日|週末|月曜日以外|月・火・水のいずれか|できるだけ早い日"
 
-TIME_PATTERN = r"\d{1,2}時[〜～\-]\d{1,2}時|\d{1,2}:\d{2}[〜～\-]\d{1,2}:\d{2}|午前中|午後|19時以降"
+TIME_PATTERN = r"\d{1,2}時(?:[〜～\-]|から)\d{1,2}時(?:の間)?|\d{1,2}:\d{2}[〜～\-]\d{1,2}:\d{2}|午前中|午後|19時以降"
 
 def extract_preferences(body: str) -> tuple[str | None, str | None]:
     date_match = re.search(DATE_PATTERN, body)
