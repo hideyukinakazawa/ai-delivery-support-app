@@ -5,7 +5,6 @@ import streamlit as st
 def create_reply_draft(
     preferred_date: str | None,
     preferred_time: str | None,
-    preferred_time: str | None,
 ) -> str:
     """抽出した希望日時から返信メール下書きを作る。"""
 
