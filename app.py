@@ -121,6 +121,12 @@ with st.expander("発送日前日", expanded=False):
         "BOX3修理品の配送日時を確認",
         key="day_before_check_3",
     )
+if all(
+    st.session_state.get(f"day_before_check_{i}", False)
+        for i in range(1, 4)
+    ):
+    st.success("発送日前日のチェックがすべて完了しました。")
+
 
 with st.expander("発送日当日", expanded=False):
     st.subheader("配送準備")
@@ -170,11 +176,16 @@ with st.expander("発送日当日", expanded=False):
         "発送日当日に倉庫会社宛ての発送完了連絡を送信",
         key="shipping_day_check_11",
     )
+    if all(
+        st.session_state.get(f"shipping_day_check_{i}", False)
+        for i in range(1, 12)
+    ):
+    st.success("発送日当日のチェックがすべて完了しました。")    
 
 with st.expander("発送後（2営業日後）", expanded=False):
     st.subheader("Re:lation連絡")
     st.checkbox(
-        "配送伝票番号をERPに入力し、作業ステータスを「完了」に変更",
+        "配送伝票番号を修理アプリに入力し、作業ステータスを「完了」に変更",
         key="after_shipping_check_1",
     )
     st.checkbox(
@@ -190,7 +201,7 @@ with st.expander("発送後（2営業日後）", expanded=False):
         key="after_shipping_check_4",
     )
 
-    st.subheader("Smaregi登録")
+    st.subheader("スマレジ登録")
     st.checkbox(
         "登録時に代引きで「金券（釣りなし）」を選択",
         key="after_shipping_check_5",
@@ -200,14 +211,19 @@ with st.expander("発送後（2営業日後）", expanded=False):
         key="after_shipping_check_6",
     )
     st.checkbox(
-        "翌月1日以降に到着する修理品は、1日以降に登録したか確認",
+        "翌月1日以降に到着する修理品は、1日以降にスマレジ登録を行う",
         key="after_shipping_check_7",
     )
     st.checkbox(
-        "倉庫会社担当者からのメールに返信して作業完了",
+        "倉庫会社担当者からのメールに返信し作業完了",
         key="after_shipping_check_8",
     )
     st.checkbox(
         "同時回収品が発送日から2週間以内に届いているか確認",
         key="after_shipping_check_9",
     )
+    if all(
+        st.session_state.get(f"after_shipping_check_{i}", False)
+        for i in range(1, 10)
+    ):
+    st.success("発送後（2営業日後）のチェックがすべて完了しました。")
