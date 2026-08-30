@@ -176,7 +176,7 @@ with st.expander("発送日当日", expanded=False):
         "発送日当日に倉庫会社宛ての発送完了連絡を送信",
         key="shipping_day_check_11",
     )
-    if all(
+if all(
         st.session_state.get(f"shipping_day_check_{i}", False)
         for i in range(1, 12)
     ):
@@ -222,7 +222,7 @@ with st.expander("発送後（2営業日後）", expanded=False):
         "同時回収品が発送日から2週間以内に届いているか確認",
         key="after_shipping_check_9",
     )
-    if all(
+if all(
         st.session_state.get(f"after_shipping_check_{i}", False)
         for i in range(1, 10)
     ):
