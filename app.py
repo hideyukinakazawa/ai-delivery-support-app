@@ -1,6 +1,51 @@
 import requests
 import streamlit as st
 
+@st.dialog("作業完了の確認")
+def show_completion_dialog(
+    phase_name: str,
+    phase_key: str,
+    total_checks: int,
+) -> None:
+    st.write(f"「{phase_name}」のチェックがすべて完了しています。")
+    st.write(f"完了チェック数：{total_checks}/{total_checks}")
+    st.write("作業完了として記録する前に、内容をもう一度確認してください。")
+
+    cancel_col, confirm_col = st.columns(2)
+
+    with cancel_col:
+        if st.button("キャンセル", key=f"{phase_key}_cancel"):
+            st.session_state[f"{phase_key}_dialog_closed"] = True
+            st.rerun()
+
+    with confirm_col:
+        if st.button("OK", type="primary", key=f"{phase_key}_confirm"):
+            st.session_state[f"{phase_key}_confirmed"] = True
+            st.rerun()
+
+
+def render_phase_completion(
+    phase_name: str,
+    phase_key: str,
+    total_checks: int,
+) -> None:
+    """フェーズ内の全チェック完了を確認し、確認ダイアログを表示する。"""
+
+    is_complete = all(
+        st.session_state.get(f"{phase_key}_check_{i}", False)
+        for i in range(1, total_checks + 1)
+    )
+
+    if not is_complete:
+        st.session_state[f"{phase_key}_dialog_closed"] = False
+        st.session_state[f"{phase_key}_confirmed"] = False
+        return
+
+    if st.session_state.get(f"{phase_key}_confirmed", False):
+        st.success(f"「{phase_name}」は確認済みです。")
+    elif not st.session_state.get(f"{phase_key}_dialog_closed", False):
+        show_completion_dialog(phase_name, phase_key, total_checks)
+
 
 def create_reply_draft(
     preferred_date: str | None,
@@ -121,12 +166,7 @@ with st.expander("発送日前日", expanded=False):
         "BOX3修理品の配送日時を確認",
         key="day_before_check_3",
     )
-if all(
-    st.session_state.get(f"day_before_check_{i}", False)
-        for i in range(1, 4)
-    ):
-    st.success("発送日前日のチェックがすべて完了しました。")
-
+render_phase_completion("発送日前日", "day_before", 3)
 
 with st.expander("発送日当日", expanded=False):
     st.subheader("配送準備")
@@ -176,54 +216,46 @@ with st.expander("発送日当日", expanded=False):
         "発送日当日に倉庫会社宛ての発送完了連絡を送信",
         key="shipping_day_check_11",
     )
-if all(
-        st.session_state.get(f"shipping_day_check_{i}", False)
-        for i in range(1, 12)
-    ):
-    st.success("発送日当日のチェックがすべて完了しました。")    
+render_phase_completion("発送日当日", "shipping_day", 11)
 
-with st.expander("発送後（2営業日後）", expanded=False):
-    st.subheader("Re:lation連絡")
+with st.expander("Re:lation連絡（2営業日後）", expanded=False):
     st.checkbox(
         "配送伝票番号を修理アプリに入力し、作業ステータスを「完了」に変更",
-        key="after_shipping_check_1",
+        key="relation_check_1"
     )
     st.checkbox(
         "BOX管理表で連絡方法が「電話」または「メール」か確認",
-        key="after_shipping_check_2",
-    )
+        key="relation_check_2"
+   )
     st.checkbox(
         "Re:lationでやり取りをメールアドレスから検索",
-        key="after_shipping_check_3",
+        key="relation_check_3"
     )
     st.checkbox(
         "メール送信前にお客様名・送り状番号を確認",
-        key="after_shipping_check_4",
+        key="relation_check_4"
     )
-
-    st.subheader("スマレジ登録")
+render_phase_completion("Re:lation連絡", "relation", 4)
+with st.expander("スマレジ登録（2営業日後）", expanded=False):
     st.checkbox(
         "登録時に代引きで「金券（釣りなし）」を選択",
-        key="after_shipping_check_5",
+        key="smaregi_check_1",
     )
     st.checkbox(
         "銀行振込では「現金預り」を選択",
-        key="after_shipping_check_6",
+        key="smaregi_check_2",
     )
     st.checkbox(
         "翌月1日以降に到着する修理品は、1日以降にスマレジ登録を行う",
-        key="after_shipping_check_7",
+        key="smaregi_check_3",
     )
     st.checkbox(
         "倉庫会社担当者からのメールに返信し作業完了",
-        key="after_shipping_check_8",
+        key="smaregi_check_4",
     )
     st.checkbox(
         "同時回収品が発送日から2週間以内に届いているか確認",
-        key="after_shipping_check_9",
+        key="smaregi_check_5",
     )
-if all(
-        st.session_state.get(f"after_shipping_check_{i}", False)
-        for i in range(1, 10)
-    ):
-    st.success("発送後（2営業日後）のチェックがすべて完了しました。")
+
+render_phase_completion("スマレジ登録", "smaregi", 5)
