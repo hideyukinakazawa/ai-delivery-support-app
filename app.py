@@ -77,10 +77,13 @@ if "classification_result" in st.session_state:
     st.subheader("分類結果")
     st.write(f"**ラベル：** {result['label']}")
     st.write(f"**確信度：** {result['confidence']:.1%}")
-if confidence < 0.5:
-    st.warning(
-        "確信度が低いため、問い合わせ本文・抽出結果・返信下書きを確認ください。"
-    )
+
+    if result["confidence"] < 0.5:
+            st.warning(
+                "確信度が低いため、分類結果を確認してください。\n"
+                "問い合わせ本文、抽出結果、返信下書きを確認してください。"
+            )
+
     st.write(
         f"**希望日：** "
         f"{result.get('preferred_date') or '指定なし'}"
