@@ -80,7 +80,7 @@ if "classification_result" in st.session_state:
 
     if result["confidence"] < 0.5:
             st.warning(
-                "確信度が低いため、分類結果を確認してください。\n"
+                "確信度が低いため、分類結果を確認してください。  \n"
                 "問い合わせ本文、抽出結果、返信下書きを確認してください。"
             )
 
