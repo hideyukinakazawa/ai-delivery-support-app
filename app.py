@@ -150,6 +150,89 @@ if "classification_result" in st.session_state:
     )
 
     st.divider()
+# --- 案件の進捗表示 ---
+
+PHASES = [
+    {
+        "name": "発送日前日",
+        "key": "day_before",
+        "total_checks": 3,
+    },
+    {
+        "name": "発送日当日",
+        "key": "shipping_day",
+        "total_checks": 11,
+    },
+    {
+        "name": "Re:lation連絡",
+        "key": "relation",
+        "total_checks": 4,
+    },
+    {
+        "name": "スマレジ登録・クローズ",
+        "key": "smaregi",
+        "total_checks": 5,
+    },
+]
+
+
+def get_phase_status(phase: dict) -> str:
+    """各作業の完了状況を返す。"""
+    phase_key = phase["key"]
+    total_checks = phase["total_checks"]
+
+    checked_count = sum(
+        st.session_state.get(f"{phase_key}_check_{i}", False)
+        for i in range(1, total_checks + 1)
+    )
+
+    if st.session_state.get(f"{phase_key}_confirmed", False):
+        return "完了"
+
+    if checked_count > 0:
+        return "作業中"
+
+    return "未着手"
+
+
+phase_statuses = [get_phase_status(phase) for phase in PHASES]
+completed_count = phase_statuses.count("完了")
+
+if "作業中" in phase_statuses:
+    current_phase_index = phase_statuses.index("作業中")
+    current_status = f"{PHASES[current_phase_index]['name']}・作業中"
+elif completed_count == len(PHASES):
+    current_status = "クローズ済み"
+else:
+    current_phase_index = min(completed_count, len(PHASES) - 1)
+    current_status = f"{PHASES[current_phase_index]['name']}・未着手"
+
+with st.container(border=True):
+    st.write("**配送案件：** DEMO-20260831-001")
+    st.write("**発送日：** 2026/08/31")
+    st.write(f"**現在の状態：** {current_status}")
+    st.write(f"**進捗：** {completed_count} / {len(PHASES)} 作業完了")
+
+st.subheader("作業進捗")
+
+status_icons = {
+    "完了": "✓",
+    "作業中": "▶",
+    "未着手": "○",
+    }
+
+progress_rows = "\n".join(
+    f"| {phase['name']} | {status_icons[status]} {status} |"
+    for phase, status in zip(PHASES, phase_statuses)
+)
+
+st.markdown(
+    f"""
+| 作業 | 状態 |
+| --- | --- |
+{progress_rows}
+"""
+    )  
 st.header("発送業務チェックリスト")
 st.caption("各業務フェーズを開き、作業完了後にチェックしてください。")
 
