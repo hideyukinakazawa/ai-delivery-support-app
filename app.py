@@ -9,7 +9,7 @@ def show_completion_dialog(
 ) -> None:
     st.write(f"「{phase_name}」のチェックがすべて完了しています。")
     st.write(f"完了チェック数：{total_checks}/{total_checks}")
-    st.write("作業完了として記録する前に、内容をもう一度確認してください。")
+    st.write("記録する前に、内容をもう一度確認ください。")
 
     cancel_col, confirm_col = st.columns(2)
 
@@ -249,7 +249,7 @@ with st.expander("発送日前日", expanded=False):
         "BOX3修理品の配送日時を確認",
         key="day_before_check_3",
     )
-render_phase_completion("発送日前日", "day_before", 3)
+    render_phase_completion("発送日前日", "day_before", 3)
 
 with st.expander("発送日当日", expanded=False):
     st.subheader("配送準備")
