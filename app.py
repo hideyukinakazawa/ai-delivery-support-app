@@ -10,7 +10,6 @@ import streamlit as st
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from gspread.exceptions import CellNotFound
 
 # --- モック用Google Sheets履歴記録 ---
 
@@ -92,11 +91,9 @@ def append_history(
     try:
         worksheet = get_history_worksheet()
 
-        try:
-            worksheet.find(record_id, in_column=1)
+        # 同じ記録IDが既にあれば、二重記録しない
+        if record_id in worksheet.col_values(1):
             return True
-        except CellNotFound:
-            pass
 
         recorded_at = datetime.now(
             ZoneInfo("Asia/Tokyo")
@@ -119,8 +116,12 @@ def append_history(
         return True
 
     except Exception:
-        # 詳細な認証情報・例外内容は画面へ出さない
-        return False
+        # 通信が途中で切れた場合も、記録済みなら二重送信しない
+        try:
+            worksheet = get_history_worksheet()
+            return record_id in worksheet.col_values(1)
+        except Exception:
+            return False
 
 @st.dialog("作業完了の確認")
 def show_completion_dialog(
@@ -184,7 +185,6 @@ def render_phase_completion(
         st.success(f"「{phase_name}」は確認済みです。")
     elif not st.session_state.get(f"{phase_key}_dialog_closed", False):
         show_completion_dialog(phase_name, phase_key, total_checks)
-        .\.venv\Scripts\python.exe -m py_compile app.py
 def are_all_phases_confirmed() -> bool:
     phase_keys = [
         "day_before",
