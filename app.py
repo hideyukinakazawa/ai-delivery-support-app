@@ -1,5 +1,126 @@
 import requests
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import gspread
 import streamlit as st
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from gspread.exceptions import CellNotFound
+
+# --- モック用Google Sheets履歴記録 ---
+
+GOOGLE_SHEETS_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+]
+
+MOCK_CASE_ID = "DEMO-20260831-001"
+MOCK_OPERATOR = "mock-user"
+
+
+def get_history_event_id(event_key: str) -> str:
+    """同じ操作の二重記録を防ぐための一意IDを返す。"""
+    session_key = f"history_event_id_{event_key}"
+
+    if session_key not in st.session_state:
+        st.session_state[session_key] = str(uuid.uuid4())
+
+    return st.session_state[session_key]
+
+
+def get_history_worksheet():
+    """ローカルOAuth認証で、モック履歴用Sheetを取得する。"""
+    spreadsheet_id = os.getenv("MOCK_HISTORY_SPREADSHEET_ID")
+    oauth_client_file = os.getenv("GOOGLE_OAUTH_CLIENT_FILE")
+
+    if not spreadsheet_id or not oauth_client_file:
+        raise RuntimeError("Google Sheetsのローカル設定が未完了です。")
+
+    client_path = Path(oauth_client_file)
+
+    if not client_path.exists():
+        raise RuntimeError("Google OAuthクライアント設定ファイルが見つかりません。")
+
+    token_dir = Path(os.getenv("LOCALAPPDATA", Path.home())) / "ai_delivery_support_app"
+    token_dir.mkdir(parents=True, exist_ok=True)
+    token_path = token_dir / "google_token.json"
+
+    credentials = None
+
+    if token_path.exists():
+        credentials = Credentials.from_authorized_user_file(
+            str(token_path),
+            GOOGLE_SHEETS_SCOPES,
+        )
+
+    if credentials and credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+
+    if not credentials or not credentials.valid:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            str(client_path),
+            GOOGLE_SHEETS_SCOPES,
+        )
+        credentials = flow.run_local_server(port=0)
+
+        token_path.write_text(
+            credentials.to_json(),
+            encoding="utf-8",
+        )
+
+    client = gspread.authorize(credentials)
+    spreadsheet = client.open_by_key(spreadsheet_id)
+
+    return spreadsheet.worksheet("作業履歴")
+
+
+def append_history(
+    record_id: str,
+    event_name: str,
+    phase_name: str,
+    status: str,
+    note: str = "",
+) -> bool:
+    """
+    モック履歴を追記する。
+    顧客情報・メール本文・住所・認証情報は扱わない。
+    """
+    try:
+        worksheet = get_history_worksheet()
+
+        try:
+            worksheet.find(record_id, in_column=1)
+            return True
+        except CellNotFound:
+            pass
+
+        recorded_at = datetime.now(
+            ZoneInfo("Asia/Tokyo")
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+        worksheet.append_row(
+            [
+                record_id,
+                MOCK_CASE_ID,
+                event_name,
+                phase_name,
+                status,
+                MOCK_OPERATOR,
+                recorded_at,
+                note,
+            ],
+            value_input_option="USER_ENTERED",
+        )
+
+        return True
+
+    except Exception:
+        # 詳細な認証情報・例外内容は画面へ出さない
+        return False
 
 @st.dialog("作業完了の確認")
 def show_completion_dialog(
@@ -9,7 +130,7 @@ def show_completion_dialog(
 ) -> None:
     st.write(f"「{phase_name}」のチェックがすべて完了しています。")
     st.write(f"完了チェック数：{total_checks}/{total_checks}")
-    st.write("記録する前に、内容をもう一度確認ください。")
+    st.write("記録する前に、内容をもう一度確認してください。")
 
     cancel_col, confirm_col = st.columns(2)
 
@@ -20,8 +141,22 @@ def show_completion_dialog(
 
     with confirm_col:
         if st.button("OK", type="primary", key=f"{phase_key}_confirm"):
-            st.session_state[f"{phase_key}_confirmed"] = True
-            st.rerun()
+            record_id = get_history_event_id(f"{phase_key}_complete")
+
+            recorded = append_history(
+                record_id=record_id,
+                event_name="フェーズ完了",
+                phase_name=phase_name,
+                status="完了",
+                note="チェックリスト確認後に記録",
+            )
+
+            if recorded:
+                st.session_state[f"{phase_key}_confirmed"] = True
+                st.session_state[f"{phase_key}_dialog_closed"] = True
+                st.rerun()
+
+            st.error("履歴を記録できませんでした。完了状態は変更していません。")
 
 
 def render_phase_completion(
@@ -39,12 +174,76 @@ def render_phase_completion(
     if not is_complete:
         st.session_state[f"{phase_key}_dialog_closed"] = False
         st.session_state[f"{phase_key}_confirmed"] = False
+        st.session_state.pop(
+            f"history_event_id_{phase_key}_complete",
+            None,
+        )
         return
 
     if st.session_state.get(f"{phase_key}_confirmed", False):
         st.success(f"「{phase_name}」は確認済みです。")
     elif not st.session_state.get(f"{phase_key}_dialog_closed", False):
         show_completion_dialog(phase_name, phase_key, total_checks)
+        .\.venv\Scripts\python.exe -m py_compile app.py
+def are_all_phases_confirmed() -> bool:
+    phase_keys = [
+        "day_before",
+        "shipping_day",
+        "relation",
+        "smaregi",
+    ]
+
+    return all(
+        st.session_state.get(f"{phase_key}_confirmed", False)
+        for phase_key in phase_keys
+    )
+
+
+@st.dialog("案件クローズの確認")
+def show_case_close_dialog() -> None:
+    st.write("4つの作業がすべて完了しています。")
+    st.write("この案件をクローズとして記録しますか？")
+
+    cancel_col, confirm_col = st.columns(2)
+
+    with cancel_col:
+        if st.button("キャンセル", key="case_close_cancel"):
+            st.rerun()
+
+    with confirm_col:
+        if st.button("案件をクローズする", type="primary", key="case_close_confirm"):
+            record_id = get_history_event_id("case_close")
+
+            recorded = append_history(
+                record_id=record_id,
+                event_name="案件クローズ",
+                phase_name="スマレジ登録完了後",
+                status="クローズ",
+                note="4フェーズ完了を確認後にクローズ",
+            )
+
+            if recorded:
+                st.session_state["case_closed"] = True
+                st.rerun()
+
+            st.error("クローズ履歴を記録できませんでした。案件はクローズしていません。")
+
+
+def render_case_close() -> None:
+    """全フェーズ完了後だけ案件クローズを許可する。"""
+    if st.session_state.get("case_closed", False):
+        st.success("この案件はクローズ済みです。")
+        return
+
+    if are_all_phases_confirmed():
+        st.success("4つの作業がすべて完了しています。")
+
+        if st.button(
+            "この案件をクローズする",
+            type="primary",
+            key="open_case_close_dialog",
+        ):
+            show_case_close_dialog()
 
 
 def create_reply_draft(
@@ -342,3 +541,4 @@ with st.expander("スマレジ登録（2営業日後）", expanded=False):
     )
 
 render_phase_completion("スマレジ登録", "smaregi", 5)
+render_case_close()

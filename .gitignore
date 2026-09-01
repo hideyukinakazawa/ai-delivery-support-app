@@ -2,3 +2,7 @@ __pycache__/
 delivery_bert_model/
 delivery_bert_model.zip
 delivery_bert_model_backup/
+
+# Local OAuth credentials
+google_oauth_client.json
+google_token.json
