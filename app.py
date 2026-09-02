@@ -19,7 +19,10 @@ GOOGLE_SHEETS_SCOPES = [
 
 MOCK_CASE_ID = "DEMO-20260831-001"
 MOCK_OPERATOR = "mock-user"
-
+MOCK_HISTORY_SHEET_URL = os.getenv(
+    "MOCK_HISTORY_SPREADSHEET_URL",
+    "",
+).strip()
 
 def get_history_event_id(event_key: str) -> str:
     """同じ操作の二重記録を防ぐための一意IDを返す。"""
@@ -411,6 +414,15 @@ with st.container(border=True):
     st.write("**発送日：** 2026/08/31")
     st.write(f"**現在の状態：** {current_status}")
     st.write(f"**進捗：** {completed_count} / {len(PHASES)} 作業完了")
+
+if MOCK_HISTORY_SHEET_URL.startswith(
+    "https://docs.google.com/spreadsheets/"
+):
+    st.link_button(
+        "モック作業履歴を開く",
+        MOCK_HISTORY_SHEET_URL,
+        help="ダミー案件の作業履歴をGoogleスプレッドシートで確認します。",
+    )
 
 st.subheader("作業進捗")
 
