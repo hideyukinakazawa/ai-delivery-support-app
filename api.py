@@ -1,3 +1,4 @@
+import unicodedata
 import json
 from pathlib import Path
 import re
@@ -24,6 +25,49 @@ model.eval()
 
 DATE_PATTERN = r"\d{1,2}月\d{1,2}日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日|日曜日|平日|週末|月曜日以外|月・火・水のいずれか|できるだけ早い日"
 
+YAMATO_TIME_SLOTS = [
+    ("14:00-16:00", "14", "16"),
+    ("16:00-18:00", "16", "18"),
+    ("18:00-20:00", "18", "20"),
+    ("19:00-21:00", "19", "21"),
+]
+
+def extract_yamato_time_slot(body: str) -> str | None:
+    """本文からヤマト運輸の時間帯だけを抽出し正式表記へ統一"""
+
+    normalized_body = unicodedata.normalize("NFKC", body)
+    normalized_body = (
+        normalized_body
+        .replace("〜", "~")
+        .replace("～", "~")
+        .replace("－", "-")
+        .replace("−", "-")
+    )
+
+    if "午前中" in normalized_body:
+        return "午前中"
+
+    for canonical_time, start_hour, end_hour in YAMATO_TIME_SLOTS:
+        pattern = (
+            rf"{start_hour}(?::00)?(?:時)?\s*"
+            rf"(?:~|-|から)\s*"
+            rf"{end_hour}(?::00)?(?:時)?"
+        )
+
+        if re.search(pattern, normalized_body):
+            return canonical_time
+
+    # 「午後」だけではヤマトの時間帯を特定できないため返さない
+    return None
+
+def extract_preferences(body: str) -> tuple[str | None, str | None]:
+    date_match = re.search(DATE_PATTERN, body)
+
+    preferred_date = date_match.group() if date_match else None
+    preferred_time = extract_yamato_time_slot(body)
+
+    return preferred_date, preferred_time
+
 TIME_PATTERN = (
     r"\d{1,2}時(?:[〜～\-]|から)\d{1,2}時(?:の間)?"
     r"|\d{1,2}:\d{2}[〜～\-]\d{1,2}:\d{2}"
@@ -33,15 +77,6 @@ TIME_PATTERN = (
     r"|\d{1,2}時"
     r"|\d{1,2}:\d{2}"
 )
-
-def extract_preferences(body: str) -> tuple[str | None, str | None]:
-    date_match = re.search(DATE_PATTERN, body)
-    time_match = re.search(TIME_PATTERN, body)
-
-    preferred_date = date_match.group() if date_match else None
-    preferred_time = time_match.group() if time_match else None
-
-    return preferred_date, preferred_time
 
 app = FastAPI(title="AI配送業務支援API")
 

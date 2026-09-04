@@ -10,6 +10,7 @@ import streamlit as st
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from datetime import datetime
 
 # --- モック用Google Sheets履歴記録 ---
 
@@ -248,37 +249,64 @@ def render_case_close() -> None:
         ):
             show_case_close_dialog()
 
-
 def create_reply_draft(
     preferred_date: str | None,
     preferred_time: str | None,
 ) -> str:
     """抽出した希望日時から返信メール下書きを作る。"""
 
+    weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+
+    if preferred_date:
+        try:
+            date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
+            delivery_date = (
+                f"{date_obj.month}月{date_obj.day}日"
+                f"（{weekdays[date_obj.weekday()]}）"
+            )
+        except ValueError:
+            delivery_date = preferred_date
+    else:
+        delivery_date = ""
+
     if preferred_date and preferred_time:
         preference_text = (
-            f"配送日は「{preferred_date}」、"
-            f"時間帯は「{preferred_time}」をご希望として伺っております。"
+            f"受取希望日時につきまして、\n"
+            f"【{delivery_date} {preferred_time}】を"
+            f"ご希望として伺っております。"
         )
     elif preferred_date:
         preference_text = (
-            f"配送日は「{preferred_date}」をご希望として伺っております。"
+            f"受取希望日につきまして、\n"
+            f"【{delivery_date}】をご希望として伺っております。"
         )
     elif preferred_time:
         preference_text = (
-            f"配送時間帯は「{preferred_time}」をご希望として伺っております。"
+            f"受取希望時間帯につきまして、\n"
+            f"【{preferred_time}】をご希望として伺っております。"
         )
     else:
         preference_text = (
-            "配送に関するお問い合わせについて、内容を確認しております。"
+            "受取希望日時につきまして、\n"
+            "内容を確認しております。"
         )
 
-    return (
-        "お問い合わせありがとうございます。\n\n"
-        f"{preference_text}\n"
-        "発送時には改めてご案内いたします。\n\n"
-        "よろしくお願いいたします。\n"
-    )
+    return f"""●●様
+
+ご返信いただきありがとうございます。
+修理担当の五味でございます。
+
+{preference_text}
+
+配送可否を確認のうえ、発送時には改めてご案内いたします。
+お品物のご到着まで今しばらくお待ちいただけますと幸いです。
+
+引き続き何卒よろしくお願い申し上げます。
+
+○○株式会社
+五味
+
+※土日祝日は休業日のため、ご連絡が遅くなる可能性がございます。あらかじめご了承ください。"""
 
 st.set_page_config(page_title="AI配送業務支援アプリ")
 st.title("AI配送業務支援アプリ")
@@ -300,19 +328,22 @@ if st.button("配送希望を分類する"):
                 json={"body": body},
                 timeout=30,
             )
+
             response.raise_for_status()
             result = response.json()
 
-            st.session_state["classification_result"] = result
-            st.session_state["reply_draft"] = create_reply_draft(
-                result.get("preferred_date"),
-                result.get("preferred_time"),
+            reply_draft = create_reply_draft(
+                    result.get("preferred_date"),
+                    result.get("preferred_time"),
             )
+
+            st.session_state["classification_result"] = result
+            st.session_state["reply_draft"] = reply_draft
 
         except requests.exceptions.ConnectionError:
             st.error(
-                "BERT分類APIに接続できません。"
-                "api.pyを起動してください。"
+             "BERT分類APIに接続できません。"
+             "api.pyを起動してください。"
             )
 
         except requests.exceptions.RequestException as error:
@@ -351,8 +382,7 @@ if "classification_result" in st.session_state:
         "担当者が確認・修正したうえで送信します。"
     )
 
-    st.divider()
-# --- 案件の進捗表示 ---
+    # --- 案件の進捗表示 ---
 
 PHASES = [
     {
