@@ -505,8 +505,16 @@ if "active_case_id" not in st.session_state:
     try:
         cases = load_cases()
     except Exception as error:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+
+        detail = type(error).__name__
+
+        if status_code is not None:
+            detail += f" / HTTP {status_code}"
+
         st.error(
-            f"案件一覧を読めません（{type(error).__name__}）。"
+            f"案件一覧を読めません（{detail}）。"
             "接続設定と見出しを確認してください。"
         )
         st.stop()
