@@ -1,4 +1,3 @@
-import requests
 import os
 import uuid
 from datetime import datetime
@@ -6,37 +5,85 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import gspread
+import requests
 import streamlit as st
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from datetime import datetime
 
-# --- モック用Google Sheets履歴記録 ---
 
 GOOGLE_SHEETS_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
-
-MOCK_CASE_ID = "DEMO-20260831-001"
 MOCK_OPERATOR = "mock-user"
-MOCK_HISTORY_SHEET_URL = os.getenv(
-    "MOCK_HISTORY_SPREADSHEET_URL",
-    "",
-).strip()
 
-def get_history_event_id(event_key: str) -> str:
-    """同じ操作の二重記録を防ぐための一意IDを返す。"""
-    session_key = f"history_event_id_{event_key}"
+CASE_HEADERS = [
+    "case_id",
+    "shipping_date",
+    "case_status",
+    "created_at",
+    "updated_at",
+    "closed_at",
+]
 
-    if session_key not in st.session_state:
-        st.session_state[session_key] = str(uuid.uuid4())
+CHECK_HEADERS = [
+    "case_id",
+    "phase_key",
+    "check_key",
+    "is_checked",
+    "updated_at",
+    "operator",
+]
 
-    return st.session_state[session_key]
+ITEMS = {
+    "day_before": [
+        "社内修理BOXを見て、依頼シートと実際の修理品の一致を確認",
+        "BOX2修理品のメールをRe:lationで確認し、担当案件へ返信",
+        "BOX3修理品の配送日時を確認",
+    ],
+    "shipping_day": [
+        "イレギュラー対応の確認（同梱・新品交換・同時回収など）",
+        "ご自宅配送リストの情報に抜け漏れがないか確認",
+        "倉庫会社との共有シートにヤマト送り状No.を入力",
+        "送り状発行データにお届け予定日時を入力",
+        "送り状発行データをヤマトのシステムへインポートし、エラーを確認",
+        "ERPの共有欄とERPの合計金額が一致しているか確認",
+        "StreamlitでWチェック（発行用データ・配送リスト・お手紙・ヤマト送り状）",
+        "イレギュラー対応はチームリーダーまたは上司に確認",
+        "修理IDと一致した修理品が段ボール箱に詰められているか確認",
+        "お手紙をクリアファイルに人数分入れる",
+        "発送日当日に倉庫会社宛ての発送完了連絡を送信",
+    ],
+    "relation": [
+        "配送伝票番号を修理アプリに入力し、作業ステータスを「完了」に変更",
+        "BOX管理表で連絡方法が「電話」または「メール」か確認",
+        "Re:lationでやり取りをメールアドレスから検索",
+        "メール送信前にお客様名・送り状番号を確認",
+    ],
+    "smaregi": [
+        "登録時に代引きで「金券（釣りなし）」を選択",
+        "銀行振込では「現金預り」を選択",
+        "翌月1日以降に到着する修理品は、1日以降にスマレジ登録を行う",
+        "倉庫会社担当者からのメールに返信し作業完了",
+        "同時回収品が発送日から2週間以内に届いているか確認",
+    ],
+}
+
+PHASE_COUNTS = {
+    phase: len(labels)
+    for phase, labels in ITEMS.items()
+}
+
+PHASE_NAMES = {
+    "day_before": "発送日前日",
+    "shipping_day": "発送日当日",
+    "relation": "Re:lation連絡（2営業日後）",
+    "smaregi": "スマレジ登録（2営業日後）",
+}
 
 
-def get_history_worksheet():
-    """ローカルOAuth認証で、モック履歴用Sheetを取得する。"""
+def get_worksheet(sheet_name: str):
+    """既存のローカルOAuth設定で接続する。"""
     spreadsheet_id = os.getenv("MOCK_HISTORY_SPREADSHEET_ID")
     oauth_client_file = os.getenv("GOOGLE_OAUTH_CLIENT_FILE")
 
@@ -46,9 +93,14 @@ def get_history_worksheet():
     client_path = Path(oauth_client_file)
 
     if not client_path.exists():
-        raise RuntimeError("Google OAuthクライアント設定ファイルが見つかりません。")
+        raise RuntimeError(
+            "Google OAuthクライアント設定ファイルが見つかりません。"
+        )
 
-    token_dir = Path(os.getenv("LOCALAPPDATA", Path.home())) / "ai_delivery_support_app"
+    token_dir = (
+        Path(os.getenv("LOCALAPPDATA", Path.home()))
+        / "ai_delivery_support_app"
+    )
     token_dir.mkdir(parents=True, exist_ok=True)
     token_path = token_dir / "google_token.json"
 
@@ -77,8 +129,174 @@ def get_history_worksheet():
 
     client = gspread.authorize(credentials)
     spreadsheet = client.open_by_key(spreadsheet_id)
+    return spreadsheet.worksheet(sheet_name)
 
-    return spreadsheet.worksheet("作業履歴")
+
+def get_history_worksheet():
+    return get_worksheet("作業履歴")
+
+
+def get_cases_worksheet():
+    return get_worksheet("案件一覧")
+
+
+def checked_rows(worksheet, headers):
+    """見出しを確認してからデータ行を返す。"""
+    rows = worksheet.get_all_values()
+
+    if not rows or rows[0][:len(headers)] != headers:
+        raise ValueError("シートの見出しが想定と異なります。")
+
+    return rows[1:]
+
+
+def load_cases():
+    rows = checked_rows(get_cases_worksheet(), CASE_HEADERS)
+    return [
+        dict(zip(CASE_HEADERS, row + [""] * (6 - len(row))))
+        for row in rows
+        if row and row[0]
+    ]
+
+
+def save_case(case_id: str, shipping_date: str) -> bool:
+    """案件を保存する。同じIDでの再試行は再追加しない。"""
+    try:
+        worksheet = get_cases_worksheet()
+        checked_rows(worksheet, CASE_HEADERS)
+
+        if case_id in worksheet.col_values(1):
+            return True
+
+        now = datetime.now(
+            ZoneInfo("Asia/Tokyo")
+        ).isoformat(timespec="seconds")
+
+        worksheet.append_row(
+            [case_id, shipping_date, "未着手", now, now, ""],
+            value_input_option="RAW",
+        )
+        return True
+
+    except Exception:
+        try:
+            worksheet = get_cases_worksheet()
+            return case_id in worksheet.col_values(1)
+        except Exception:
+            return False
+
+
+def update_case_status(case_id, status):
+    """対象案件の状態と日時だけを更新する。"""
+    worksheet = get_cases_worksheet()
+    rows = checked_rows(worksheet, CASE_HEADERS)
+
+    matches = [
+        (i, row)
+        for i, row in enumerate(rows, 2)
+        if row and row[0] == case_id
+    ]
+
+    if len(matches) != 1:
+        raise ValueError("案件IDが存在しないか、重複しています。")
+
+    index, row = matches[0]
+    row = row + [""] * (6 - len(row))
+
+    if row[2] == "クローズ":
+        if status != "クローズ":
+            raise ValueError("クローズ済み案件は変更できません。")
+        return
+
+    now = datetime.now(
+        ZoneInfo("Asia/Tokyo")
+    ).isoformat(timespec="seconds")
+
+    worksheet.update(
+        range_name=f"C{index}:F{index}",
+        values=[
+            [
+                status,
+                row[3],
+                now,
+                now if status == "クローズ" else "",
+            ]
+        ],
+        value_input_option="RAW",
+    )
+
+def open_case(case):
+    """作業履歴から確認済みフェーズを復元する。"""
+    rows = get_history_worksheet().get_all_values()
+    completed_phases = set()
+
+    # 旧版と現行版のフェーズ名に対応する
+    aliases = {
+        "day_before": {
+            PHASE_NAMES["day_before"],
+            "発送日前日",
+        },
+        "shipping_day": {
+            PHASE_NAMES["shipping_day"],
+            "発送日当日",
+        },
+        "relation": {
+            PHASE_NAMES["relation"],
+            "Re:lation連絡",
+        },
+        "smaregi": {
+            PHASE_NAMES["smaregi"],
+            "スマレジ登録",
+        },
+    }
+
+    for row in rows[1:]:
+        if len(row) < 5 or row[1] != case["case_id"]:
+            continue
+
+        if row[2] == "フェーズ完了" and row[4] == "完了":
+            for phase, names in aliases.items():
+                if row[3] in names:
+                    completed_phases.add(phase)
+
+    # 前の案件の一時状態を消す
+    for key in list(st.session_state):
+        if key.startswith(
+            tuple(PHASE_COUNTS) + ("history_event_id_",)
+        ) or key in (
+            "case_closed",
+            "classification_result",
+            "reply_draft",
+            "email_body",
+            "save_error",
+            "progress_dirty",
+            "progress_notice",
+        ):
+            del st.session_state[key]
+
+    closed = case["case_status"] == "クローズ"
+
+    for phase, count in PHASE_COUNTS.items():
+        complete = closed or phase in completed_phases
+        st.session_state[f"{phase}_confirmed"] = complete
+
+        for i in range(1, count + 1):
+            st.session_state[f"{phase}_check_{i}"] = complete
+
+    st.session_state["active_case_id"] = case["case_id"]
+    st.session_state["active_shipping_date"] = case["shipping_date"]
+    st.session_state["case_closed"] = closed
+
+def get_history_event_id(event_key: str) -> str:
+    session_key = (
+        f"history_event_id_"
+        f"{st.session_state['active_case_id']}_{event_key}"
+    )
+
+    if session_key not in st.session_state:
+        st.session_state[session_key] = str(uuid.uuid4())
+
+    return st.session_state[session_key]
 
 
 def append_history(
@@ -88,14 +306,10 @@ def append_history(
     status: str,
     note: str = "",
 ) -> bool:
-    """
-    モック履歴を追記する。
-    顧客情報・メール本文・住所・認証情報は扱わない。
-    """
+    """選択中の案件IDで既存の作業履歴に追記する。"""
     try:
         worksheet = get_history_worksheet()
 
-        # 同じ記録IDが既にあれば、二重記録しない
         if record_id in worksheet.col_values(1):
             return True
 
@@ -106,7 +320,7 @@ def append_history(
         worksheet.append_row(
             [
                 record_id,
-                MOCK_CASE_ID,
+                st.session_state["active_case_id"],
                 event_name,
                 phase_name,
                 status,
@@ -114,152 +328,30 @@ def append_history(
                 recorded_at,
                 note,
             ],
-            value_input_option="USER_ENTERED",
+            value_input_option="RAW",
         )
-
         return True
 
     except Exception:
-        # 通信が途中で切れた場合も、記録済みなら二重送信しない
         try:
             worksheet = get_history_worksheet()
             return record_id in worksheet.col_values(1)
         except Exception:
             return False
 
-@st.dialog("作業完了の確認")
-def show_completion_dialog(
-    phase_name: str,
-    phase_key: str,
-    total_checks: int,
-) -> None:
-    st.write(f"「{phase_name}」のチェックがすべて完了しています。")
-    st.write(f"完了チェック数：{total_checks}/{total_checks}")
-    st.write("記録する前に、内容をもう一度確認してください。")
-
-    cancel_col, confirm_col = st.columns(2)
-
-    with cancel_col:
-        if st.button("キャンセル", key=f"{phase_key}_cancel"):
-            st.session_state[f"{phase_key}_dialog_closed"] = True
-            st.rerun()
-
-    with confirm_col:
-        if st.button("OK", type="primary", key=f"{phase_key}_confirm"):
-            record_id = get_history_event_id(f"{phase_key}_complete")
-
-            recorded = append_history(
-                record_id=record_id,
-                event_name="フェーズ完了",
-                phase_name=phase_name,
-                status="完了",
-                note="チェックリスト確認後に記録",
-            )
-
-            if recorded:
-                st.session_state[f"{phase_key}_confirmed"] = True
-                st.session_state[f"{phase_key}_dialog_closed"] = True
-                st.rerun()
-
-            st.error("履歴を記録できませんでした。完了状態は変更していません。")
-
-
-def render_phase_completion(
-    phase_name: str,
-    phase_key: str,
-    total_checks: int,
-) -> None:
-    """フェーズ内の全チェック完了を確認し、確認ダイアログを表示する。"""
-
-    is_complete = all(
-        st.session_state.get(f"{phase_key}_check_{i}", False)
-        for i in range(1, total_checks + 1)
-    )
-
-    if not is_complete:
-        st.session_state[f"{phase_key}_dialog_closed"] = False
-        st.session_state[f"{phase_key}_confirmed"] = False
-        st.session_state.pop(
-            f"history_event_id_{phase_key}_complete",
-            None,
-        )
-        return
-
-    if st.session_state.get(f"{phase_key}_confirmed", False):
-        st.success(f"「{phase_name}」は確認済みです。")
-    elif not st.session_state.get(f"{phase_key}_dialog_closed", False):
-        show_completion_dialog(phase_name, phase_key, total_checks)
-def are_all_phases_confirmed() -> bool:
-    phase_keys = [
-        "day_before",
-        "shipping_day",
-        "relation",
-        "smaregi",
-    ]
-
-    return all(
-        st.session_state.get(f"{phase_key}_confirmed", False)
-        for phase_key in phase_keys
-    )
-
-
-@st.dialog("案件クローズの確認")
-def show_case_close_dialog() -> None:
-    st.write("4つの作業がすべて完了しています。")
-    st.write("この案件をクローズとして記録しますか？")
-
-    cancel_col, confirm_col = st.columns(2)
-
-    with cancel_col:
-        if st.button("キャンセル", key="case_close_cancel"):
-            st.rerun()
-
-    with confirm_col:
-        if st.button("案件をクローズする", type="primary", key="case_close_confirm"):
-            record_id = get_history_event_id("case_close")
-
-            recorded = append_history(
-                record_id=record_id,
-                event_name="案件クローズ",
-                phase_name="スマレジ登録完了後",
-                status="クローズ",
-                note="4フェーズ完了を確認後にクローズ",
-            )
-
-            if recorded:
-                st.session_state["case_closed"] = True
-                st.rerun()
-
-            st.error("クローズ履歴を記録できませんでした。案件はクローズしていません。")
-
-
-def render_case_close() -> None:
-    """全フェーズ完了後だけ案件クローズを許可する。"""
-    if st.session_state.get("case_closed", False):
-        st.success("この案件はクローズ済みです。")
-        return
-
-    if are_all_phases_confirmed():
-        st.success("4つの作業がすべて完了しています。")
-
-        if st.button(
-            "この案件をクローズする",
-            type="primary",
-            key="open_case_close_dialog",
-        ):
-            show_case_close_dialog()
 
 def create_reply_draft(
     preferred_date: str | None,
     preferred_time: str | None,
 ) -> str:
-    """抽出した希望日時から返信メール下書きを作る。"""
-
     weekdays = ["月", "火", "水", "木", "金", "土", "日"]
 
     if preferred_date:
         try:
-            date_obj = datetime.strptime(preferred_date, "%Y-%m-%d")
+            date_obj = datetime.strptime(
+                preferred_date,
+                "%Y-%m-%d",
+            )
             delivery_date = (
                 f"{date_obj.month}月{date_obj.day}日"
                 f"（{weekdays[date_obj.weekday()]}）"
@@ -271,18 +363,18 @@ def create_reply_draft(
 
     if preferred_date and preferred_time:
         preference_text = (
-            f"受取希望日時につきまして、\n"
+            "受取希望日時につきまして、\n"
             f"【{delivery_date} {preferred_time}】を"
-            f"ご希望として伺っております。"
+            "ご希望として伺っております。"
         )
     elif preferred_date:
         preference_text = (
-            f"受取希望日につきまして、\n"
+            "受取希望日につきまして、\n"
             f"【{delivery_date}】をご希望として伺っております。"
         )
     elif preferred_time:
         preference_text = (
-            f"受取希望時間帯につきまして、\n"
+            "受取希望時間帯につきまして、\n"
             f"【{preferred_time}】をご希望として伺っております。"
         )
     else:
@@ -308,279 +400,359 @@ def create_reply_draft(
 
 ※土日祝日は休業日のため、ご連絡が遅くなる可能性がございます。あらかじめご了承ください。"""
 
+
+@st.dialog("作業完了の確認")
+def confirm_phase(phase):
+    st.write(
+        f"「{PHASE_NAMES[phase]}」の全項目を"
+        "確認済みとして記録しますか？"
+    )
+
+    if st.button("確認して記録", key="confirm_phase_ok"):
+        all_checked = all(
+            st.session_state.get(f"{phase}_check_{i}", False)
+            for i in range(1, PHASE_COUNTS[phase] + 1)
+        )
+
+        if not all_checked:
+            st.error("すべての項目をチェックしてください。")
+            return
+
+        recorded = append_history(
+            get_history_event_id(f"{phase}_complete"),
+            "フェーズ完了",
+            PHASE_NAMES[phase],
+            "完了",
+        )
+
+        if not recorded:
+            st.error(
+                "作業履歴の保存を確認できません。"
+                "時間をおいて再試行してください。"
+            )
+            return
+
+        try:
+            update_case_status(
+                st.session_state["active_case_id"],
+                "作業中",
+            )
+        except Exception as error:
+            st.error(
+                "作業履歴は記録済みですが、"
+                "案件一覧の更新を確認できません"
+                f"（{type(error).__name__}）。"
+                "もう一度「確認して記録」を押してください。"
+            )
+            return
+
+        st.session_state[f"{phase}_confirmed"] = True
+        st.rerun()
+
+@st.dialog("案件クローズの確認")
+def confirm_close():
+    st.write("この案件をクローズしますか？")
+
+    if st.button("案件をクローズする", key="confirm_close_ok"):
+        if st.session_state.get("save_error") or not all(
+            st.session_state.get(f"{phase}_confirmed")
+            for phase in ITEMS
+        ):
+            st.error("全フェーズの確認と保存を完了してください。")
+            return
+
+        case_id = st.session_state["active_case_id"]
+
+        recorded = append_history(
+            f"{case_id}:close",
+            "案件クローズ",
+            "スマレジ登録完了後",
+            "クローズ",
+        )
+
+        if not recorded:
+            st.error("履歴の保存を確認できません。再試行してください。")
+            return
+
+        try:
+            update_case_status(case_id, "クローズ")
+        except Exception as error:
+            st.error(
+                "履歴は記録済みですが、"
+                "案件一覧の更新を確認できません"
+                f"（{type(error).__name__}）。"
+                "再試行してください。"
+            )
+            return
+
+        st.session_state.pop("active_case_id", None)
+        st.session_state["case_notice"] = (
+            f"{case_id}をクローズしました。"
+        )
+        st.rerun()
+
+
+# ---------- アプリ画面 ----------
+
 st.set_page_config(page_title="AI配送業務支援アプリ")
 st.title("AI配送業務支援アプリ")
-st.caption("問い合わせメール本文から配送希望を4分類します。")
+st.caption("案件保存・再開対応版")
 
-body = st.text_area(
-    "問い合わせメール本文",
-    placeholder="例：平日の14:00-16:00に配送をお願いします。",
-    height=180,
+
+# ---------- 案件一覧画面 ----------
+
+if "active_case_id" not in st.session_state:
+    st.subheader("案件一覧")
+
+    if "case_notice" in st.session_state:
+        st.success(st.session_state.pop("case_notice"))
+
+    try:
+        cases = load_cases()
+    except Exception as error:
+        st.error(
+            f"案件一覧を読めません（{type(error).__name__}）。"
+            "接続設定と見出しを確認してください。"
+        )
+        st.stop()
+
+    if cases:
+        mapping = {
+            case["case_id"]: case
+            for case in cases
+        }
+
+        selected = st.selectbox(
+            "再開する案件",
+            list(mapping),
+            format_func=lambda cid: (
+                f"{cid} ｜ "
+                f"{mapping[cid]['shipping_date']} ｜ "
+                f"{mapping[cid]['case_status']}"
+            ),
+        )
+
+        if st.button("選択した案件を開く", type="primary"):
+            try:
+                open_case(mapping[selected])
+                st.rerun()
+            except Exception as error:
+                st.error(
+                    f"案件を開けません（{type(error).__name__}）。"
+                    "チェック状態シートと見出しを確認してください。"
+                )
+    else:
+        st.info("保存済み案件はありません。")
+
+    with st.expander("新しい案件を作成"):
+        if "new_case_id" not in st.session_state:
+            st.session_state["new_case_id"] = (
+                f"CASE-{uuid.uuid4()}"
+            )
+
+        with st.form("new_case_form"):
+            shipping_date = st.date_input(
+                "発送予定日",
+                value=datetime.now(
+                    ZoneInfo("Asia/Tokyo")
+                ).date(),
+            )
+            submitted = st.form_submit_button("案件を保存")
+
+        if submitted:
+            saved = save_case(
+                st.session_state["new_case_id"],
+                shipping_date.isoformat(),
+            )
+
+            if saved:
+                st.session_state.pop("new_case_id", None)
+                st.session_state["case_notice"] = (
+                    "保存しました。"
+                    "一覧から案件を選んで開いてください。"
+                )
+                st.rerun()
+
+            st.error(
+                "保存を確認できません。"
+                "日付を変えずに再試行してください。"
+            )
+
+    st.stop()
+
+
+# ---------- 選択した案件の作業画面 ----------
+
+closed = st.session_state.get("case_closed", False)
+
+st.caption(
+    "保存するのはフェーズ完了と案件クローズです。"
+    "フェーズ途中のチェックは、案件を開き直すとリセットされます。"
 )
 
-if st.button("配送希望を分類する"):
-    if not body.strip():
-        st.warning("メール本文を入力してください。")
-    else:
-        try:
-            response = requests.post(
-                "http://127.0.0.1:8000/classify",
-                json={"body": body},
-                timeout=30,
-            )
+if st.button("案件一覧へ戻る"):
+    st.session_state.pop("active_case_id", None)
+    st.rerun()
 
-            response.raise_for_status()
-            result = response.json()
-
-            reply_draft = create_reply_draft(
-                    result.get("preferred_date"),
-                    result.get("preferred_time"),
-            )
-
-            st.session_state["classification_result"] = result
-            st.session_state["reply_draft"] = reply_draft
-
-        except requests.exceptions.ConnectionError:
-            st.error(
-             "BERT分類APIに接続できません。"
-             "api.pyを起動してください。"
-            )
-
-        except requests.exceptions.RequestException as error:
-            st.error(f"API呼び出しエラー：{error}")
-
-if "classification_result" in st.session_state:
-    result = st.session_state["classification_result"]
-
-    st.subheader("分類結果")
-    st.write(f"**ラベル：** {result['label']}")
-    st.write(f"**確信度：** {result['confidence']:.1%}")
-
-    if result["confidence"] < 0.5:
-            st.warning(
-                "確信度が低いため、分類結果を確認してください。  \n"
-                "問い合わせ本文、抽出結果、返信下書きを確認してください。"
-            )
-
-    st.write(
-        f"**希望日：** "
-        f"{result.get('preferred_date') or '指定なし'}"
-    )
-    st.write(
-        f"**希望時間帯：** "
-        f"{result.get('preferred_time') or '指定なし'}"
-    )
-
-    st.subheader("返信メール下書き")
-    st.text_area(
-        "内容を確認し、必要に応じて修正してください。",
-        key="reply_draft",
-        height=160,
-    )
-    st.caption(
-        "この下書きは自動送信されません。"
-        "担当者が確認・修正したうえで送信します。"
-    )
-
-    # --- 案件の進捗表示 ---
-
-PHASES = [
-    {
-        "name": "発送日前日",
-        "key": "day_before",
-        "total_checks": 3,
-    },
-    {
-        "name": "発送日当日",
-        "key": "shipping_day",
-        "total_checks": 11,
-    },
-    {
-        "name": "Re:lation連絡",
-        "key": "relation",
-        "total_checks": 4,
-    },
-    {
-        "name": "スマレジ登録・クローズ",
-        "key": "smaregi",
-        "total_checks": 5,
-    },
-]
-
-
-def get_phase_status(phase: dict) -> str:
-    """各作業の完了状況を返す。"""
-    phase_key = phase["key"]
-    total_checks = phase["total_checks"]
-
-    checked_count = sum(
-        st.session_state.get(f"{phase_key}_check_{i}", False)
-        for i in range(1, total_checks + 1)
-    )
-
-    if st.session_state.get(f"{phase_key}_confirmed", False):
-        return "完了"
-
-    if checked_count > 0:
-        return "作業中"
-
-    return "未着手"
-
-
-phase_statuses = [get_phase_status(phase) for phase in PHASES]
-completed_count = phase_statuses.count("完了")
-
-if "作業中" in phase_statuses:
-    current_phase_index = phase_statuses.index("作業中")
-    current_status = f"{PHASES[current_phase_index]['name']}・作業中"
-elif completed_count == len(PHASES):
-    current_status = "クローズ済み"
-else:
-    current_phase_index = min(completed_count, len(PHASES) - 1)
-    current_status = f"{PHASES[current_phase_index]['name']}・未着手"
+completed = sum(
+    bool(st.session_state.get(f"{phase}_confirmed"))
+    for phase in ITEMS
+)
 
 with st.container(border=True):
-    st.write("**配送案件：** DEMO-20260831-001")
-    st.write("**発送日：** 2026/08/31")
-    st.write(f"**現在の状態：** {current_status}")
-    st.write(f"**進捗：** {completed_count} / {len(PHASES)} 作業完了")
+    st.write(
+        f"**配送案件：** {st.session_state['active_case_id']}"
+    )
+    st.write(
+        f"**発送日：** {st.session_state['active_shipping_date']}"
+    )
 
-if MOCK_HISTORY_SHEET_URL.startswith(
+    if closed:
+        status = "クローズ済み"
+    elif completed == 4:
+        status = "全作業完了・クローズ待ち"
+    else:
+        status = "作業受付中"
+
+    st.write(
+        f"**状態：** {status}　／　"
+        f"確認済み：{completed}/4フェーズ"
+    )
+
+
+# ---------- BERT分類と返信下書き ----------
+
+with st.expander("問い合わせの分類・返信下書き"):
+    body = st.text_area(
+        "問い合わせメール本文",
+        key="email_body",
+        height=180,
+    )
+
+    if st.button("配送希望を分類する"):
+        if not body.strip():
+            st.warning("メール本文を入力してください。")
+        else:
+            try:
+                response = requests.post(
+                    "http://127.0.0.1:8000/classify",
+                    json={"body": body},
+                    timeout=30,
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                st.session_state["classification_result"] = result
+                st.session_state["reply_draft"] = create_reply_draft(
+                    result.get("preferred_date"),
+                    result.get("preferred_time"),
+                )
+
+            except (
+                requests.exceptions.RequestException,
+                ValueError,
+            ):
+                st.error(
+                    "分類APIを呼び出せません。"
+                    "api.pyの起動と応答を確認してください。"
+                )
+
+    if "classification_result" in st.session_state:
+        result = st.session_state["classification_result"]
+
+        st.write(
+            f"**分類：** {result['label']} ／ "
+            f"**確信度：** {result['confidence']:.1%}"
+        )
+
+        if result["confidence"] < 0.5:
+            st.warning(
+                "確信度が低いため、"
+                "本文・抽出結果・下書きを確認してください。"
+            )
+
+        st.write(
+            f"希望日：{result.get('preferred_date') or '指定なし'}"
+        )
+        st.write(
+            f"希望時間帯：{result.get('preferred_time') or '指定なし'}"
+        )
+
+        st.text_area(
+            "返信メール下書き（編集可能）",
+            key="reply_draft",
+            height=180,
+        )
+
+    st.caption(
+        "本文・下書きは保存しません。"
+        "自動送信はせず、担当者が確認・修正して送信します。"
+    )
+
+
+# ---------- チェックリスト ----------
+
+st.header("発送業務チェックリスト")
+
+for phase, labels in ITEMS.items():
+    confirmed = st.session_state.get(
+        f"{phase}_confirmed",
+        False,
+    )
+    title = PHASE_NAMES[phase] + (
+        " ✓確認済み" if confirmed else ""
+    )
+
+    with st.expander(title):
+        for i, label in enumerate(labels, 1):
+            if phase == "shipping_day" and i in (1, 7):
+                st.subheader(
+                    "配送準備" if i == 1 else "梱包"
+                )
+
+            st.checkbox(
+                label,
+                key=f"{phase}_check_{i}",
+                disabled=closed or confirmed,
+            )
+
+        all_checked = all(
+            st.session_state.get(
+                f"{phase}_check_{i}",
+                False,
+            )
+            for i in range(1, len(labels) + 1)
+        )
+
+        if confirmed:
+            st.success("確認済みです。")
+        elif all_checked and not closed:
+            if st.button(
+                "このフェーズの完了を確認",
+                key=f"confirm_{phase}",
+            ):
+                confirm_phase(phase)
+
+
+# ---------- クローズ ----------
+
+if closed:
+    st.success("この案件はクローズ済みです。")
+elif completed == 4:
+    if st.button(
+        "この案件をクローズする",
+        type="primary",
+        disabled=bool(st.session_state.get("save_error")),
+    ):
+        confirm_close()
+
+
+history_url = os.getenv(
+    "MOCK_HISTORY_SPREADSHEET_URL",
+    "",
+).strip()
+
+if history_url.startswith(
     "https://docs.google.com/spreadsheets/"
 ):
-    st.link_button(
-        "モック作業履歴を開く",
-        MOCK_HISTORY_SHEET_URL,
-        help="ダミー案件の作業履歴をGoogleスプレッドシートで確認します。",
-    )
-
-st.subheader("作業進捗")
-
-status_icons = {
-    "完了": "✓",
-    "作業中": "▶",
-    "未着手": "○",
-    }
-
-progress_rows = "\n".join(
-    f"| {phase['name']} | {status_icons[status]} {status} |"
-    for phase, status in zip(PHASES, phase_statuses)
-)
-
-st.markdown(
-    f"""
-| 作業 | 状態 |
-| --- | --- |
-{progress_rows}
-"""
-    )  
-st.header("発送業務チェックリスト")
-st.caption("各業務フェーズを開き、作業完了後にチェックしてください。")
-
-with st.expander("発送日前日", expanded=False):
-    st.checkbox(
-        "社内修理BOXを見て、依頼シートと実際の修理品の一致を確認",
-        key="day_before_check_1",
-    )
-    st.checkbox(
-        "BOX2修理品のメールをRe:lationで確認し、担当案件へ返信",
-        key="day_before_check_2",
-    )
-    st.checkbox(
-        "BOX3修理品の配送日時を確認",
-        key="day_before_check_3",
-    )
-    render_phase_completion("発送日前日", "day_before", 3)
-
-with st.expander("発送日当日", expanded=False):
-    st.subheader("配送準備")
-    st.checkbox(
-        "イレギュラー対応の確認（同梱・新品交換・同時回収など）",
-        key="shipping_day_check_1",
-    )
-    st.checkbox(
-        "ご自宅配送リストの情報に抜け漏れがないか確認",
-        key="shipping_day_check_2",
-    )
-    st.checkbox(
-        "倉庫会社との共有シートにヤマト送り状No.を入力",
-        key="shipping_day_check_3",
-    )
-    st.checkbox(
-        "送り状発行データにお届け予定日時を入力",
-        key="shipping_day_check_4",
-    )
-    st.checkbox(
-        "送り状発行データをヤマトのシステムへインポートし、エラーを確認",
-        key="shipping_day_check_5",
-    )
-    st.checkbox(
-        "ERPの共有欄とERPの合計金額が一致しているか確認",
-        key="shipping_day_check_6",
-    )
-
-    st.subheader("梱包")
-    st.checkbox(
-        "StreamlitでWチェック（発行用データ・配送リスト・お手紙・ヤマト送り状）",
-        key="shipping_day_check_7",
-    )
-    st.checkbox(
-        "イレギュラー対応はチームリーダーまたは上司に確認",
-        key="shipping_day_check_8",
-    )
-    st.checkbox(
-        "修理IDと一致した修理品が段ボール箱に詰められているか確認",
-        key="shipping_day_check_9",
-    )
-    st.checkbox(
-        "お手紙をクリアファイルに人数分入れる",
-        key="shipping_day_check_10",
-    )
-    st.checkbox(
-        "発送日当日に倉庫会社宛ての発送完了連絡を送信",
-        key="shipping_day_check_11",
-    )
-render_phase_completion("発送日当日", "shipping_day", 11)
-
-with st.expander("Re:lation連絡（2営業日後）", expanded=False):
-    st.checkbox(
-        "配送伝票番号を修理アプリに入力し、作業ステータスを「完了」に変更",
-        key="relation_check_1"
-    )
-    st.checkbox(
-        "BOX管理表で連絡方法が「電話」または「メール」か確認",
-        key="relation_check_2"
-   )
-    st.checkbox(
-        "Re:lationでやり取りをメールアドレスから検索",
-        key="relation_check_3"
-    )
-    st.checkbox(
-        "メール送信前にお客様名・送り状番号を確認",
-        key="relation_check_4"
-    )
-render_phase_completion("Re:lation連絡", "relation", 4)
-with st.expander("スマレジ登録（2営業日後）", expanded=False):
-    st.checkbox(
-        "登録時に代引きで「金券（釣りなし）」を選択",
-        key="smaregi_check_1",
-    )
-    st.checkbox(
-        "銀行振込では「現金預り」を選択",
-        key="smaregi_check_2",
-    )
-    st.checkbox(
-        "翌月1日以降に到着する修理品は、1日以降にスマレジ登録を行う",
-        key="smaregi_check_3",
-    )
-    st.checkbox(
-        "倉庫会社担当者からのメールに返信し作業完了",
-        key="smaregi_check_4",
-    )
-    st.checkbox(
-        "同時回収品が発送日から2週間以内に届いているか確認",
-        key="smaregi_check_5",
-    )
-
-render_phase_completion("スマレジ登録", "smaregi", 5)
-render_case_close()
+    st.link_button("作業履歴を開く", history_url)
