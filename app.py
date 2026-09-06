@@ -26,15 +26,6 @@ CASE_HEADERS = [
     "closed_at",
 ]
 
-CHECK_HEADERS = [
-    "case_id",
-    "phase_key",
-    "check_key",
-    "is_checked",
-    "updated_at",
-    "operator",
-]
-
 ITEMS = {
     "day_before": [
         "社内修理BOXを見て、依頼シートと実際の修理品の一致を確認",
@@ -81,6 +72,12 @@ PHASE_NAMES = {
     "smaregi": "スマレジ登録（2営業日後）",
 }
 
+def are_phase_checks_complete(phase: str, total_checks: int) -> bool:
+    """指定フェーズの全項目がチェック済みかを返す。"""
+    return all(
+        st.session_state.get(f"{phase}_check_{i}", False)
+        for i in range(1, total_checks + 1)
+    )
 
 def get_worksheet(sheet_name: str):
     """既存のローカルOAuth設定で接続する。"""
@@ -288,16 +285,14 @@ def open_case(case):
     st.session_state["case_closed"] = closed
 
 def get_history_event_id(event_key: str) -> str:
-    session_key = (
-        f"history_event_id_"
-        f"{st.session_state['active_case_id']}_{event_key}"
-    )
+    """案件と操作に対応する記録IDを、セッション内で再利用する。"""
+    case_id = st.session_state["active_case_id"]
+    session_key = f"history_event_id_{case_id}_{event_key}"
 
     if session_key not in st.session_state:
         st.session_state[session_key] = str(uuid.uuid4())
 
     return st.session_state[session_key]
-
 
 def append_history(
     record_id: str,
@@ -409,9 +404,9 @@ def confirm_phase(phase):
     )
 
     if st.button("確認して記録", key="confirm_phase_ok"):
-        all_checked = all(
-            st.session_state.get(f"{phase}_check_{i}", False)
-            for i in range(1, PHASE_COUNTS[phase] + 1)
+        all_checked = are_phase_checks_complete(
+            phase,
+            PHASE_COUNTS[phase],
         )
 
         if not all_checked:
@@ -716,12 +711,9 @@ for phase, labels in ITEMS.items():
                 disabled=closed or confirmed,
             )
 
-        all_checked = all(
-            st.session_state.get(
-                f"{phase}_check_{i}",
-                False,
-            )
-            for i in range(1, len(labels) + 1)
+        all_checked = are_phase_checks_complete(
+            phase,
+            len(labels),
         )
 
         if confirmed:
