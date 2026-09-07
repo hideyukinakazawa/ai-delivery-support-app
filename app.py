@@ -146,6 +146,33 @@ def checked_rows(worksheet, headers):
 
     return rows[1:]
 
+def visible_cases(cases):
+    """未クローズ全件と、最新のクローズ済み10件を返す。"""
+    def closed_timestamp(case):
+        try:
+            value = datetime.fromisoformat(
+                case.get("closed_at") or ""
+            )
+            if value.tzinfo is None:
+                value = value.replace(
+                    tzinfo=ZoneInfo("Asia/Tokyo")
+                )
+            return value.timestamp()
+        except (ValueError, TypeError, OverflowError, OSError):
+            # 日時が空欄・不正な案件は最後に並べる
+            return float("-inf")
+
+    active = [
+        case for case in cases
+        if case["case_status"] != "クローズ"
+    ]
+    closed = [
+        case for case in cases
+        if case["case_status"] == "クローズ"
+    ]
+
+    closed.sort(key=closed_timestamp, reverse=True)
+    return active + closed[:10]
 
 def load_cases():
     rows = checked_rows(get_cases_worksheet(), CASE_HEADERS)
@@ -503,7 +530,7 @@ if "active_case_id" not in st.session_state:
         st.success(st.session_state.pop("case_notice"))
 
     try:
-        cases = load_cases()
+        cases = visible_cases(load_cases())
     except Exception as error:
         response = getattr(error, "response", None)
         status_code = getattr(response, "status_code", None)
