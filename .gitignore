@@ -6,3 +6,4 @@ delivery_bert_model_backup/
 # Local OAuth credentials
 google_oauth_client.json
 google_token.json
+app copy.py
