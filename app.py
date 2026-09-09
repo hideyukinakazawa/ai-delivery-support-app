@@ -620,9 +620,22 @@ st.caption(
     "フェーズ途中のチェックは、案件を開き直すとリセットされます。"
 )
 
-if st.button("案件一覧へ戻る"):
-    st.session_state.pop("active_case_id", None)
-    st.rerun()
+history_url = os.getenv(
+    "MOCK_HISTORY_SPREADSHEET_URL", ""
+).strip()
+
+cases_column, history_column = st.columns(2)
+
+with cases_column:
+    if st.button("案件一覧を開く"):
+        st.session_state.pop("active_case_id", None)
+        st.rerun()
+
+with history_column:
+    if history_url.startswith(
+        "https://docs.google.com/spreadsheets/"
+    ):
+        st.link_button("作業履歴を開く", history_url)
 
 completed = sum(
     bool(st.session_state.get(f"{phase}_confirmed"))
@@ -772,14 +785,3 @@ elif completed == 4:
         disabled=bool(st.session_state.get("save_error")),
     ):
         confirm_close()
-
-
-history_url = os.getenv(
-    "MOCK_HISTORY_SPREADSHEET_URL",
-    "",
-).strip()
-
-if history_url.startswith(
-    "https://docs.google.com/spreadsheets/"
-):
-    st.link_button("作業履歴を開く", history_url)
