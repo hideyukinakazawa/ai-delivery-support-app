@@ -1,5 +1,4 @@
 import os
-import uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -7,6 +6,7 @@ from zoneinfo import ZoneInfo
 import gspread
 import requests
 import streamlit as st
+import history_store
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -250,38 +250,23 @@ def update_case_status(case_id, status):
     )
 
 def open_case(case):
-    """作業履歴から確認済みフェーズを復元する。"""
-    rows = get_history_worksheet().get_all_values()
-    completed_phases = set()
+    """新形式の作業履歴から、確認済みフェーズを復元する。"""
+    history_store.case_number(case["case_id"])
+    records = history_store.load_history(
+        get_history_worksheet()
+    )
 
-    # 旧版と現行版のフェーズ名に対応する
-    aliases = {
-        "day_before": {
-            PHASE_NAMES["day_before"],
-            "発送日前日",
-        },
-        "shipping_day": {
-            PHASE_NAMES["shipping_day"],
-            "発送日当日",
-        },
-        "relation": {
-            PHASE_NAMES["relation"],
-            "Re:lation連絡",
-        },
-        "smaregi": {
-            PHASE_NAMES["smaregi"],
-            "スマレジ登録",
-        },
+    completed_phases = {
+        phase
+        for phase, name in PHASE_NAMES.items()
+        if any(
+            record["案件ID"] == case["case_id"]
+            and record["対象フェーズ"] == name
+            and record["状態"] == "完了"
+            for record in records
+        )
     }
 
-    for row in rows[1:]:
-        if len(row) < 5 or row[1] != case["case_id"]:
-            continue
-
-        if row[2] == "フェーズ完了" and row[4] == "完了":
-            for phase, names in aliases.items():
-                if row[3] in names:
-                    completed_phases.add(phase)
 
     # 前の案件の一時状態を消す
     for key in list(st.session_state):
@@ -311,55 +296,30 @@ def open_case(case):
     st.session_state["active_shipping_date"] = case["shipping_date"]
     st.session_state["case_closed"] = closed
 
-def get_history_event_id(event_key: str) -> str:
-    """案件と操作に対応する記録IDを、セッション内で再利用する。"""
-    case_id = st.session_state["active_case_id"]
-    session_key = f"history_event_id_{case_id}_{event_key}"
-
-    if session_key not in st.session_state:
-        st.session_state[session_key] = str(uuid.uuid4())
-
-    return st.session_state[session_key]
-
 def append_history(
-    record_id: str,
-    event_name: str,
     phase_name: str,
     status: str,
     note: str = "",
 ) -> bool:
-    """選択中の案件IDで既存の作業履歴に追記する。"""
+    """新形式で履歴を保存する。失敗時は画面から再試行する。"""
     try:
-        worksheet = get_history_worksheet()
-
-        if record_id in worksheet.col_values(1):
-            return True
-
-        recorded_at = datetime.now(
-            ZoneInfo("Asia/Tokyo")
-        ).strftime("%Y-%m-%d %H:%M:%S")
-
-        worksheet.append_row(
-            [
-                record_id,
-                st.session_state["active_case_id"],
-                event_name,
-                phase_name,
-                status,
-                MOCK_OPERATOR,
-                recorded_at,
-                note,
-            ],
-            value_input_option="RAW",
+        return history_store.save_history(
+            worksheet=get_history_worksheet(),
+            case_id=st.session_state["active_case_id"],
+            phase_name=phase_name,
+            status=status,
+            operator=MOCK_OPERATOR,
+            note=note,
         )
-        return True
-
-    except Exception:
-        try:
-            worksheet = get_history_worksheet()
-            return record_id in worksheet.col_values(1)
-        except Exception:
-            return False
+    except ValueError as error:
+        st.error(str(error))
+        return False
+    except Exception as error:
+        st.error(
+            f"履歴の保存を確認できません"
+            f"（{type(error).__name__}）。"
+        )
+        return False
 
 
 def create_reply_draft(
@@ -441,8 +401,6 @@ def confirm_phase(phase):
             return
 
         recorded = append_history(
-            get_history_event_id(f"{phase}_complete"),
-            "フェーズ完了",
             PHASE_NAMES[phase],
             "完了",
         )
@@ -486,8 +444,6 @@ def confirm_close():
         case_id = st.session_state["active_case_id"]
 
         recorded = append_history(
-            f"{case_id}:close",
-            "案件クローズ",
             "スマレジ登録完了後",
             "クローズ",
         )
@@ -569,34 +525,61 @@ if "active_case_id" not in st.session_state:
             except Exception as error:
                 st.error(
                     f"案件を開けません（{type(error).__name__}）。"
-                    "チェック状態シートと見出しを確認してください。"
+                    "作業履歴シートの見出しと案件IDを確認してください。。"
                 )
     else:
         st.info("保存済み案件はありません。")
 
-    with st.expander("新しい案件を作成"):
-        if "new_case_id" not in st.session_state:
-            st.session_state["new_case_id"] = (
-                f"CASE-{uuid.uuid4()}"
-            )
+        pending = st.session_state.get("pending_new_case")
+
+        default_date = (
+            datetime.strptime(
+                pending["shipping_date"], "%Y-%m-%d"
+            ).date()
+            if pending
+            else datetime.now(ZoneInfo("Asia/Tokyo")).date()
+        )
 
         with st.form("new_case_form"):
             shipping_date = st.date_input(
                 "発送予定日",
-                value=datetime.now(
-                    ZoneInfo("Asia/Tokyo")
-                ).date(),
+                value=default_date,
+                disabled=pending is not None,
             )
             submitted = st.form_submit_button("案件を保存")
 
         if submitted:
-            saved = save_case(
-                st.session_state["new_case_id"],
-                shipping_date.isoformat(),
-            )
+            saved = False
+
+            try:
+                if pending is None:
+                    date_text = shipping_date.isoformat()
+                    all_cases = load_cases()
+
+                    pending = {
+                        "case_id": history_store.make_case_id(
+                            date_text,
+                            [case["case_id"] for case in all_cases],
+                        ),
+                        "shipping_date": date_text,
+                    }
+                    st.session_state["pending_new_case"] = pending
+
+                saved = save_case(
+                    pending["case_id"],
+                    pending["shipping_date"],
+                )
+
+            except ValueError as error:
+                st.error(str(error))
+            except Exception as error:
+                st.error(
+                    f"案件保存の処理を確認できません"
+                    f"（{type(error).__name__}）。"
+                )
 
             if saved:
-                st.session_state.pop("new_case_id", None)
+                st.session_state.pop("pending_new_case", None)
                 st.session_state["case_notice"] = (
                     "保存しました。"
                     "一覧から案件を選んで開いてください。"
@@ -605,7 +588,7 @@ if "active_case_id" not in st.session_state:
 
             st.error(
                 "保存を確認できません。"
-                "日付を変えずに再試行してください。"
+                "同じ画面で「案件を保存」を押して再試行してください。"
             )
 
     st.stop()
