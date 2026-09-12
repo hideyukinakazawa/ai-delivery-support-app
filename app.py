@@ -530,6 +530,7 @@ if "active_case_id" not in st.session_state:
     else:
         st.info("保存済み案件はありません。")
 
+    with st.expander("新しい案件を作成"):    
         pending = st.session_state.get("pending_new_case")
 
         default_date = (
@@ -607,7 +608,7 @@ history_url = os.getenv(
     "MOCK_HISTORY_SPREADSHEET_URL", ""
 ).strip()
 
-cases_column, history_column = st.columns(2)
+cases_column, history_column, _ = st.columns([1, 1, 4])
 
 with cases_column:
     if st.button("案件一覧を開く"):

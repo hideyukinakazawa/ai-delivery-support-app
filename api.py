@@ -23,60 +23,50 @@ model = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR)
 model.to(device)
 model.eval()
 
-DATE_PATTERN = r"\d{1,2}月\d{1,2}日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日|日曜日|平日|週末|月曜日以外|月・火・水のいずれか|できるだけ早い日"
+DATE_PATTERN = r"\d{1,2}月\d{1,2}日|[月火水木金土日]曜日|平日|週末|できるだけ早い日"
 
-YAMATO_TIME_SLOTS = [
-    ("14:00-16:00", "14", "16"),
-    ("16:00-18:00", "16", "18"),
-    ("18:00-20:00", "18", "20"),
-    ("19:00-21:00", "19", "21"),
-]
+TIME_PATTERN = re.compile(
+    r"午前中|(?<![\d:])(?:14:00-16:00|16:00-18:00|"
+    r"18:00-20:00|19:00-21:00)(?![\d:])"
+)
 
-def extract_yamato_time_slot(body: str) -> str | None:
-    """本文からヤマト運輸の時間帯だけを抽出し正式表記へ統一"""
+NEGATIVE_PATTERN = re.compile(
+    r"以外|除[くきい]|避け|不可|無理|難し|不要|不在|"
+    r"でき(?:ない|ません)|出来(?:ない|ません)|"
+    r"受け取れ(?:ない|ません)|希望し(?:ない|ません)|"
+    r"では(?:なく|ない|ありません)|じゃ(?:なく|ない)|"
+    r"しないで|都合が(?:悪|つか|つきません)|ダメ|だめ|NG",
+    re.IGNORECASE,
+)
 
-    normalized_body = unicodedata.normalize("NFKC", body)
-    normalized_body = (
-        normalized_body
-        .replace("〜", "~")
-        .replace("～", "~")
-        .replace("－", "-")
-        .replace("−", "-")
-    )
-
-    if "午前中" in normalized_body:
-        return "午前中"
-
-    for canonical_time, start_hour, end_hour in YAMATO_TIME_SLOTS:
-        pattern = (
-            rf"{start_hour}(?::00)?(?:時)?\s*"
-            rf"(?:~|-|から)\s*"
-            rf"{end_hour}(?::00)?(?:時)?"
-        )
-
-        if re.search(pattern, normalized_body):
-            return canonical_time
-
-    # 「午後」だけではヤマトの時間帯を特定できないため返さない
-    return None
 
 def extract_preferences(body: str) -> tuple[str | None, str | None]:
-    date_match = re.search(DATE_PATTERN, body)
+    """否定を含む区切りを除外し、候補が1種類の場合だけ返す。"""
+    text = unicodedata.normalize("NFKC", body)
+    text = re.sub(r"[〜～~－−]", "-", text)
+    text = re.sub(
+        r"(?<![\d:])(\d{1,2})(?::00)?時?\s*(?:-|から)\s*"
+        r"(\d{1,2})(?::00)?時?(?![\d:])",
+        r"\1:00-\2:00",
+        text,
+    )
 
-    preferred_date = date_match.group() if date_match else None
-    preferred_time = extract_yamato_time_slot(body)
+    dates, times = set(), set()
+    for clause in re.split(r"[、,。.!！?？\n;；]+", text):
+        if NEGATIVE_PATTERN.search(clause):
+            continue
+        dates.update(re.findall(DATE_PATTERN, clause))
+        times.update(TIME_PATTERN.findall(clause))
 
+    # 否定後の別候補は別の区切りにあれば採用。複数候補は担当者確認。
+    preferred_date = next(iter(dates)) if len(dates) == 1 else None
+    preferred_time = next(iter(times)) if len(times) == 1 else None
     return preferred_date, preferred_time
 
-TIME_PATTERN = (
-    r"\d{1,2}時(?:[〜～\-]|から)\d{1,2}時(?:の間)?"
-    r"|\d{1,2}:\d{2}[〜～\-]\d{1,2}:\d{2}"
-    r"|19時以降"
-    r"|(?:午前|午後)\d{1,2}時"
-    r"|午前中|午後"
-    r"|\d{1,2}時"
-    r"|\d{1,2}:\d{2}"
-)
+
+def extract_yamato_time_slot(body: str) -> str | None:
+    return extract_preferences(body)[1]
+
 
 app = FastAPI(title="AI配送業務支援API")
 

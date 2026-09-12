@@ -1,2 +1,11 @@
+streamlit
+fastapi[standard]
+torch
+transformers
+requests
+pydantic
 gspread
+google-auth
 google-auth-oauthlib
+pandas
+tzdata; sys_platform == "win32"
