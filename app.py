@@ -473,9 +473,57 @@ def confirm_close():
 # ---------- アプリ画面 ----------
 
 st.set_page_config(page_title="AI配送業務支援アプリ")
-st.title("AI配送業務支援アプリ")
-st.caption("案件保存・再開対応版")
 
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap');
+
+.stApp {
+    --app-font: "Lato", Arial, Helvetica, "游ゴシック体",
+        "Yu Gothic", YuGothic, "游ゴシック Medium",
+        "Yu Gothic Medium", "Hiragino Kaku Gothic Pro",
+        Meiryo, sans-serif;
+    background-color: #FAF8F5;
+    color: #302B27;
+    font-family: var(--app-font);
+}
+
+.stApp :is(h1, h2, h3, h4, h5, h6, p, label, input, textarea, button, select) {
+    font-family: var(--app-font) !important;
+}
+
+.stApp :is(h1, h2, h3, h4, h5, h6) {
+    color: #302B27;
+}
+
+.stApp :is(input, textarea) {
+    background-color: #EDE6DD;
+    color: #302B27;
+}
+
+.stApp :is(
+    button[kind="primary"],
+    a[kind="primary"],
+    [data-testid="stBaseButton-primary"],
+    [data-testid="stBaseLinkButton-primary"]
+) {
+    background-color: #805538;
+    border-color: #805538;
+    color: white;
+}
+
+.stApp :is(
+    button[kind="primary"],
+    a[kind="primary"],
+    [data-testid="stBaseButton-primary"],
+    [data-testid="stBaseLinkButton-primary"]
+):not(:disabled):hover {
+    background-color: #67432C;
+    border-color: #67432C;
+    color: white;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------- 案件一覧画面 ----------
 
@@ -600,7 +648,7 @@ if "active_case_id" not in st.session_state:
 closed = st.session_state.get("case_closed", False)
 
 st.caption(
-    "保存するのはフェーズ完了と案件クローズです。"
+    "保存するのはフェーズ完了と案件クローズです。  \n"
     "フェーズ途中のチェックは、案件を開き直すとリセットされます。"
 )
 
@@ -611,7 +659,7 @@ history_url = os.getenv(
 cases_column, history_column, _ = st.columns([1, 1, 4])
 
 with cases_column:
-    if st.button("案件一覧を開く"):
+    if st.button("案件一覧を開く", type="primary"):
         st.session_state.pop("active_case_id", None)
         st.rerun()
 
