@@ -647,9 +647,16 @@ if "active_case_id" not in st.session_state:
 
 closed = st.session_state.get("case_closed", False)
 
-st.caption(
-    "保存するのはフェーズ完了と案件クローズです。  \n"
-    "フェーズ途中のチェックは、案件を開き直すとリセットされます。"
+st.markdown(
+"""
+    <div style="color:#5A514B; font-size:0.75rem; line-height:1.5;
+    margin-bottom:1rem;
+    ">
+    保存するのはフェーズ完了と案件クローズです。<br>
+    フェーズ途中のチェックは、案件を開き直すとリセットされます。
+    </div>
+""",
+    unsafe_allow_html=True,
 )
 
 history_url = os.getenv(
@@ -760,7 +767,7 @@ with st.expander("問い合わせの分類・返信下書き"):
         )
 
     st.caption(
-        "本文・下書きは保存しません。"
+        "本文・下書きは保存しません。  \n"
         "自動送信はせず、担当者が確認・修正して送信します。"
     )
 
